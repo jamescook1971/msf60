@@ -1,0 +1,157 @@
+#include <Time.h>
+#include <TimeLib.h>
+
+//simple MSF decoder without using interrupts
+// see http://www.npl.co.uk/upload/pdf/MSF_Time_Date_Code.pdf  for details of signal
+
+
+int zhour;
+int zminute;
+int zsecond;
+int zyear;
+int bitcount;
+int bitdata[65][3];
+String zday[7]={"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"};
+String zmonth[12]={"January","February","March","April","May","June","July","August","September","October","November","December"};
+int lastpinmode = 0;
+long timerstart;
+long timer;
+String testresult;
+int weekdaynum;
+int monthnum;
+int monthdaynum;
+int passconditions;
+int timechecked = 0;
+short timesynced; 
+
+
+
+void setup() {
+  
+pinMode(2, INPUT);  //input from MSF60 decoder module
+Serial.begin(9600);
+
+}
+
+void loop() {
+
+//read rising edge from input pin
+
+if (digitalRead(2) == HIGH){
+  if (lastpinmode == 0){
+    timerstart = millis();
+    lastpinmode = 1;
+    }
+}
+
+//calculate bits on falling edge 
+
+if (digitalRead(2) == LOW){
+  if (lastpinmode == 1){
+    timer = millis() - timerstart;
+    lastpinmode = 0;
+       if(timer >50){        bitcount++;
+        bitdata[bitcount][1] = 1;
+          if(timer>150){
+            bitdata[bitcount][2] = 1;
+              if(timer>250){
+                bitdata[bitcount][3]= 1;
+                  if(timer>450){       //resets bitcounter to 0 when 500ms pulse is detected 
+                    bitcount = 0;
+                    for (int x = 0; x<=59; x++){
+                      bitdata[x][1] = 0;
+                      bitdata[x][2] = 0;
+                      bitdata[x][3] = 0;
+                                       
+                    }
+                  }
+              }
+           }
+         
+
+     
+      Serial.print("Bit sequence: ");
+      if(bitcount<10){Serial.print(int(0));} 
+      Serial.print(int(bitcount) + String("    BitA: ") + int(bitdata[bitcount][2]) +  String("    BitB: ") + int(bitdata[bitcount][3]));
+     
+      if (timechecked== 1){
+
+      Serial.print("   ");
+      if(hour()<10){Serial.print("0");}
+      Serial.print(int(hour()) + String(":"));
+      if(minute()<10){Serial.print("0");}
+      Serial.print(int(minute()) + String(":"));
+      if(second()<10){Serial.print("0");}
+      Serial.println(int(second()) + String("   ") + String(zday[weekdaynum]) + String(" ") + int(day()) + String(" ") + String(zmonth[month()-1]) + String(" ") + int(year()) + String("   seconds since last sync:") + long((millis()-timesynced)/1000));
+      
+      }
+       
+      else {
+
+      Serial.println("   waiting for confirmed time signal");
+      } 
+      }
+              
+  }        
+       }
+    
+      
+  
+
+
+
+if (bitcount == 59) {    //the error checking sequence is triggered when 59 sets of bits are registered since the last 500ms pulse
+ 
+  testresult = errorcheck();
+  if (testresult == "Pass"){  
+    timechecked =1;
+    timesynced = millis();   
+    weekdaynum = (bitdata[36][2]*4)+(bitdata[37][2]*2)+bitdata[38][2];
+    if(weekdaynum==7){weekdaynum=0;}//corrects for difference between MSF weekday order and TIME weekday order
+    monthnum = (bitdata[25][2]*10)+(bitdata[26][2]*8)+(bitdata[27][2]*4)+(bitdata[28][2]*2)+bitdata[29][2]-1;
+    monthdaynum = (bitdata[30][2]*20)+(bitdata[31][2]*10)+(bitdata[32][2]*8)+(bitdata[33][2]*4)+(bitdata[34][2]*2)+bitdata[35][2];
+    zyear = 2000 + (bitdata[17][2]*80)+(bitdata[18][2]*40)+(bitdata[19][2]*20)+(bitdata[20][2]*10)+(bitdata[21][2]*8)+(bitdata[22][2]*4)+(bitdata[23][2]*2)+bitdata[24][2];
+    zhour = (bitdata[39][2]*20)+(bitdata[40][2]*10)+(bitdata[41][2]*8)+(bitdata[42][2]*4)+(bitdata[43][2]*2)+bitdata[44][2];
+    zminute = (bitdata[45][2]*40)+(bitdata[46][2]*20)+(bitdata[47][2]*10)+(bitdata[48][2]*8)+(bitdata[49][2]*4)+(bitdata[50][2]*2)+bitdata[51][2];
+    zsecond =0;
+
+    
+    setTime(zhour,zminute,zsecond,monthdaynum,monthnum+1,zyear);//update system time with new MSF time
+   
+    Serial.print(String("Confirmed OK at  ") + (int(zhour)) + String(":"));
+    if(zminute<10){Serial.print(int(0));}
+    Serial.println(int(zminute) + String(":00  ") + String(zday[weekdaynum]) + String(" ") + int(monthdaynum)+ String(" ") + String(zmonth[monthnum]) + String(" ") +  int(zyear));
+ 
+  }
+  else
+  {
+
+    Serial.println("Error checking failed");
+    
+  }
+  
+  bitcount=0;
+}
+
+
+}
+
+
+
+
+
+String errorcheck(){    //runs through the 5 tests needed to confirm signal is correct
+
+Serial.println("Error checking....");
+passconditions = 0;
+
+if (bitdata[52][2]+bitdata[59][2]==0 && bitdata[53][2]+bitdata[54][2]+bitdata[55][2]+bitdata[56][2]+bitdata[57][2]+bitdata[58][2]==6)  {passconditions++;}  // checks the 01111110 bit sequence from bit 52 to bit 59
+if ((bitdata[54][3] + bitdata[17][2] + bitdata[18][2] + bitdata[19][2] + bitdata[20][2] + bitdata[21][2] + bitdata[22][2] + bitdata[23][2] + bitdata[24][2]) % 2 != 0){ passconditions++;} //checks the sum of bits 54B & 17-24A is odd
+if ((bitdata[55][3] + bitdata[35][2] + bitdata[25][2] + bitdata[26][2] + bitdata[27][2] + bitdata[28][2]+bitdata[29][2]+bitdata[30][2]+bitdata[31][2]+bitdata[32][2]+bitdata[33][2]+bitdata[34][2]) % 2 != 0){passconditions++;} //checks the sum of bits 55B & 25-35A is odd
+if ((bitdata[56][3] + bitdata[36][2] + bitdata[37][2] + bitdata[38][2]) % 2 != 0){passconditions++;} // checks the sum of bits 56B & 36-38A is odd
+if ((bitdata[57][3] +bitdata[39][2] + bitdata[40][2] + bitdata[41][2] + bitdata[42][2] + bitdata[43][2] + bitdata[44][2] + bitdata[45][2] + bitdata[46][2] + bitdata[47][2] + bitdata[48][2] + bitdata[49][2] + bitdata[50][2] + bitdata[51][2]) % 2 != 0){passconditions++;} // checks the sum of bits 57B and 39-51A is odd
+Serial.println(String("tests passed:") + int(passconditions) + String("/5"));
+if (passconditions == 5) { return "Pass";} else {return "Fail";}
+ 
+
+}
